@@ -1,0 +1,14 @@
+# VS2022 临时文件和目录
+.vs/
+*.sln.docstates
+*.vcxproj.user
+*.suo
+
+# 编译输出
+Debug/
+Release/
+x64/
+*.exe
+*.obj
+*.pdb
+*.ilk
