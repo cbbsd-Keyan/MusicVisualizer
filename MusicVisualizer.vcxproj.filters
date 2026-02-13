@@ -26,5 +26,8 @@
     <ClInclude Include="..\ConsoleApplication2\Visualizer\circle\SmoothValue.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="emotion_system.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
