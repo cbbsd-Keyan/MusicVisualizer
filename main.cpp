@@ -189,7 +189,7 @@ public:
         life -= dt * 0.5f;
         position += velocity * dt * 60.0f;
         velocity.y += 0.03f;
-        radius = 8.0f + volume * 50.0f;
+        radius = 8.0f + volume * 20.0f;
     }
     void draw(sf::RenderTarget& target) {
         if (life <= 0) return;
@@ -201,32 +201,44 @@ public:
 };
 
 namespace ParticleEffect {
+    static float maxVolumeSeen = 0.01f;  
+    static float normVolume = 0.0f;   
     std::vector<MusicParticle> particles;
     sf::Clock particleClock;
     SmoothValue<float> smoothedVolume(0.0f, 8.0f);
     void init() { particles.clear(); particleClock.restart(); }
     void update(float dt, float volume, bool isPlaying, const ColorPalette& palette, const AnimationParameters& animParams,
-        bool useEmotionalColors) {   // 新增参数
+        bool useEmotionalColors) {
         smoothedVolume.setTarget(volume);
         smoothedVolume.update(dt);
-        float vol = smoothedVolume.getCurrent();
+        float smoothVol = smoothedVolume.getCurrent();
+
+        // ----- 自动增益控制（AGC）-----
+        if (smoothVol > maxVolumeSeen)
+            maxVolumeSeen = maxVolumeSeen * 0.7f + smoothVol * 0.3f;
+        else
+            maxVolumeSeen *= 0.999f; 
+        if (maxVolumeSeen < 0.01f) maxVolumeSeen = 0.01f;
+        float rawNorm = smoothVol / maxVolumeSeen;
+        rawNorm = std::min(rawNorm, 1.0f);
+        normVolume = normVolume * 0.95f + rawNorm * 0.05f; 
+
         if (isPlaying) {
             if (particleClock.getElapsedTime().asSeconds() > 0.05f) {
-                int particleCount = 2 + static_cast<int>(vol * 5.0f);
+                // 用 normVolume 替换原来的 smoothVol（系数不变）
+                int particleCount = 2 + static_cast<int>(normVolume * 5.0f);          // 原来用 smoothVol*5
                 for (int i = 0; i < particleCount; i++) {
                     float angle = static_cast<float>(rand() % 360) * 3.14159f / 180.0f;
-                    float circleRadius = 20.0f + vol * 50.0f;
+                    float circleRadius = 20.0f + normVolume * 50.0f;                  // 原来用 smoothVol*50
                     MusicParticle particle(
                         WINDOW_WIDTH / 2.0f + cos(angle) * circleRadius,
                         WINDOW_HEIGHT / 2.0f + sin(angle) * circleRadius
                     );
-                    // ---------- 颜色选择 ----------
+                    // 颜色选择
                     if (useEmotionalColors) {
-                        // 情感模式：使用调色板主色
                         particle.color = palette.primary;
                     }
                     else {
-                        // 彩色模式：原来的 HSB 颜色（根据角度）
                         float hue = fmod(angle * 180.0f / 3.14159f, 360.0f);
                         particle.color = sf::Color(
                             static_cast<sf::Uint8>(127 + 127 * sin(hue * 3.14159f / 180.0f)),
@@ -234,10 +246,10 @@ namespace ParticleEffect {
                             static_cast<sf::Uint8>(127 + 127 * sin((hue + 240.0f) * 3.14159f / 180.0f))
                         );
                     }
-                    // 速度（情感模式可乘 animParams.speed，彩色模式保持原样）
+                    float baseSpeed = 2.5f + normVolume * 10.0f;
                     particle.velocity = sf::Vector2f(
-                        cos(angle) * (2.5f + vol * 10.0f) * (useEmotionalColors ? animParams.speed : 1.0f),
-                        sin(angle) * (2.5f + vol * 10.0f) * (useEmotionalColors ? animParams.speed : 1.0f)
+                        cos(angle) * baseSpeed * (useEmotionalColors ? animParams.speed : 1.0f),
+                        sin(angle) * baseSpeed * (useEmotionalColors ? animParams.speed : 1.0f)
                     );
                     particles.push_back(particle);
                 }
@@ -245,7 +257,7 @@ namespace ParticleEffect {
             }
         }
         for (auto it = particles.begin(); it != particles.end();) {
-            it->update(dt, vol);
+            it->update(dt, normVolume); 
             if (it->life <= 0) it = particles.erase(it);
             else ++it;
         }
@@ -327,7 +339,6 @@ public:
     }
     void setScaleFactor(float scale) { scaleFactor = scale; }
 };
-
 namespace WaveformEffect {
     WaveformVisualizer waveform;
     SmoothValue<float> smoothedVolume(0.0f, 10.0f);
@@ -348,10 +359,11 @@ namespace WaveformEffect {
         bool useEmotionalColors) {
         smoothedVolume.setTarget(volume);
         smoothedVolume.update(dt);
+        float smoothVol = smoothedVolume.getCurrent();
         static std::vector<float> decaySamples;
         if (isPlaying) {
             if (!samples.empty()) {
-                waveform.update(samples, smoothedVolume.getCurrent(), time);
+                waveform.update(samples, smoothVol, time);
                 decaySamples = samples;
             }
         }
@@ -362,11 +374,10 @@ namespace WaveformEffect {
             else {
                 for (float& val : decaySamples) val *= 0.95f;
             }
-            waveform.update(decaySamples, smoothedVolume.getCurrent() * 0.3f, time);
+            waveform.update(decaySamples, smoothVol * 0.3f, time);
         }
-        // ---------- 根据模式设置波形颜色 ----------
         if (useEmotionalColors) {
-            waveform.setColorsFromPalette(palette, smoothedVolume.getCurrent());
+            waveform.setColorsFromPalette(palette, smoothVol);
         }
         else {
         }
@@ -405,25 +416,39 @@ namespace CircleEffect {
         trailTexture.clear(sf::Color::Black);
     }
     void update(float dt, float volume, const ColorPalette& palette, bool useEmotionalColors) {
+        // 1. 更新平滑音量（保留原有平滑，数值可调）
         smoothedVolume.setTarget(volume);
         smoothedVolume.update(dt);
-        float targetCircleSize = smoothedVolume.getCurrent() * 2200.0f;
-        targetCircleSize = std::min(targetCircleSize, 400.0f);
+        float smoothVol = smoothedVolume.getCurrent();
+
+        // 2. 直接使用平滑音量映射到圆环大小（线性映射）
+        const float VOLUME_TO_RADIUS_FACTOR = 1000.0f;  // 原系数，可调
+        const float MAX_RADIUS = 400.0f;                // 原最大半径，可调
+        const float MIN_RADIUS = 20.0f;                 // 新增最小半径，避免完全消失（可调）
+
+        float targetCircleSize = smoothVol * VOLUME_TO_RADIUS_FACTOR;
+        // 限制在最小和最大之间
+        targetCircleSize = std::clamp(targetCircleSize, MIN_RADIUS, MAX_RADIUS);
+
+        // 3. 平滑半径变化（circleSize 本身已提供平滑，其速度可调）
         circleSize.setTarget(targetCircleSize);
         circleSize.update(dt);
         float currentCircleSize = circleSize.getCurrent();
+
         centerCircle.setRadius(currentCircleSize);
         centerCircle.setOrigin(currentCircleSize, currentCircleSize);
 
-        // ---------- 设置颜色 ----------
+        // 4. 颜色设置（保持不变）
         if (useEmotionalColors) {
-            centerCircle.setOutlineColor(palette.primary); 
-            centerCircle.setFillColor(sf::Color::Transparent); 
+            centerCircle.setOutlineColor(palette.primary);
+            centerCircle.setFillColor(sf::Color::Transparent);
         }
         else {
             centerCircle.setOutlineColor(sf::Color::White);
             centerCircle.setFillColor(sf::Color::Transparent);
         }
+
+        // 5. 拖尾绘制（保持不变）
         sf::RectangleShape trailRect(sf::Vector2f(WINDOW_WIDTH, WINDOW_HEIGHT));
         trailRect.setFillColor(sf::Color(0, 0, 0, 30));
         trailTexture.draw(trailRect, sf::BlendAlpha);
@@ -463,14 +488,31 @@ public:
         }
     }
     int frameCount = 0;
-    void update(const std::vector<float>& bandEnergies, float dt, const ColorPalette& palette, bool useEmotionalColors) {
+    void update(const std::vector<float>& bandEnergies, float dt, const ColorPalette& palette,
+        bool useEmotionalColors, float globalScale) {
         static std::vector<float> prevEnergies(barCount, 0.0f);
+        static std::vector<float> maxBandEnergy(barCount, 0.01f);  // 每个频带独立最大值
         for (int i = 0; i < barCount; i++) {
             float energy = (i < (int)bandEnergies.size()) ? bandEnergies[i] : 0.0f;
             float smoothedEnergy = prevEnergies[i] * 0.95f + energy * 0.05f;
             prevEnergies[i] = smoothedEnergy;
-            float logEnergy = std::log10(1.0f + smoothedEnergy * 99.0f);
-            float targetHeight = logEnergy * maxHeight * 0.3f;
+
+            // 更新每个频带的最大值
+            if (smoothedEnergy > maxBandEnergy[i]) {
+                maxBandEnergy[i] = maxBandEnergy[i] * 0.7f + smoothedEnergy * 0.3f;
+            }
+            else {
+                maxBandEnergy[i] *= 0.9995f;
+            }
+            if (maxBandEnergy[i] < 0.01f) maxBandEnergy[i] = 0.01f;
+
+            float normEnergy = smoothedEnergy / maxBandEnergy[i];
+            normEnergy = std::min(normEnergy, 1.0f);
+
+            float logEnergy = std::log10(1.0f + normEnergy * 99.0f); // 对数压缩
+
+            // 不使用 globalScale，或者用 globalScale 微调（可保留但系数调小）
+            float targetHeight = logEnergy * maxHeight * 0.2f;  // 去掉 globalScale
             targetHeight = std::min(targetHeight, maxHeight);
             targetHeight = std::max(targetHeight, 7.0f);
             barHeights[i].setTarget(targetHeight);
@@ -478,8 +520,9 @@ public:
             float currentHeight = barHeights[i].getCurrent();
             bars[i].setSize(sf::Vector2f(barWidth, currentHeight));
             bars[i].setPosition(bars[i].getPosition().x, WINDOW_HEIGHT - currentHeight);
+
+            // 颜色
             if (useEmotionalColors) {
-                // 从 primary 渐变到 secondary
                 float ratio = (float)i / barCount;
                 sf::Color color;
                 color.r = palette.primary.r + (palette.secondary.r - palette.primary.r) * ratio;
@@ -488,7 +531,6 @@ public:
                 bars[i].setFillColor(color);
             }
             else {
-                // 彩色模式：原来的 HSB 彩虹色
                 float hue = fmod(i * 1.5f + frameCount * 0.5f, 360.0f);
                 bars[i].setFillColor(hsbToRgb(hue, 80.0f, 100.0f));
             }
@@ -499,8 +541,10 @@ public:
 };
 
 namespace SpectrumEffect {
+    static float maxOverallEnergy = 0.01f;
+    static float globalNorm = 0.0f;
     const int VISUAL_BANDS = 256;
-    FrequencyBars frequencyBars(VISUAL_BANDS, 600.0f);
+    FrequencyBars frequencyBars(VISUAL_BANDS, 1000.0f);
     sf::RenderTexture trailTexture;
     SmoothValue<float> smoothedVolume(0.0f, 5.0f);
     std::vector<float> bandEnergies;
@@ -513,14 +557,27 @@ namespace SpectrumEffect {
         trailTexture.clear(sf::Color::Black);
         audioBuffer.resize(1024);
     }
-    // 重载一个更直接的 update，接收已经计算好的 bandEnergies
     void updateWithBands(float dt, const std::vector<float>& energies,
         const ColorPalette& palette, bool useEmotionalColors) {
         bandEnergies = energies;
+
+        // ----- 计算总体能量并更新全局AGC -----
+        float totalEnergy = 0.0f;
+        for (float e : bandEnergies) totalEnergy += e;
+        if (totalEnergy > maxOverallEnergy)
+            maxOverallEnergy = maxOverallEnergy * 0.7f + totalEnergy * 0.3f;
+        else
+            maxOverallEnergy *= 0.999f;          // 缓慢衰减
+        if (maxOverallEnergy < 0.01f) maxOverallEnergy = 0.01f;
+        float rawGlobal = totalEnergy / maxOverallEnergy;
+        rawGlobal = std::min(rawGlobal, 1.0f);
+        globalNorm = globalNorm * 0.95f + rawGlobal * 0.05f;
+
+        // 拖尾绘制
         sf::RectangleShape trailRect(sf::Vector2f(WINDOW_WIDTH, WINDOW_HEIGHT));
         trailRect.setFillColor(sf::Color(0, 0, 0, 30));
         trailTexture.draw(trailRect, sf::BlendAlpha);
-        frequencyBars.update(bandEnergies, dt, palette, useEmotionalColors); 
+        frequencyBars.update(bandEnergies, dt, palette, useEmotionalColors, globalNorm);  // 新增参数
         frequencyBars.draw(trailTexture);
         trailTexture.display();
     }
@@ -542,7 +599,7 @@ int main() {
 
     // ----- 音频加载 -----
     sf::SoundBuffer soundBuffer;
-    std::string musicPath = "C:\\Users\\zhaok\\Desktop\\dvorak_new_world.mp3"; // 修改为你的路径
+    std::string musicPath = "C:\\Users\\zhaok\\Desktop\\dvorak_new_world.mp3";
     if (!soundBuffer.loadFromFile(musicPath)) {
         std::cerr << "Error: Cannot load audio file! Use simulated audio." << std::endl;
     }
@@ -737,11 +794,11 @@ int main() {
         float smoothFlux = emotionDetector.getSmoothFlux();
         float smoothLowHighRatio = emotionDetector.getSmoothLowHighRatio();
 
-        std::cout << "Volume: " << smoothVolume
+        /*std::cout << "Volume: " << smoothVolume
             << " Centroid: " << smoothCentroid
             << " Flux: " << smoothFlux
             << " Low/High: " << smoothLowHighRatio
-            << " Emotion: " << emotionName << std::endl;
+            << " Emotion: " << emotionName << std::endl;*/
 
         // ----- 更新当前效果 -----
         bool useEmo = (currentColorMode == EMOTIONAL);
@@ -805,7 +862,6 @@ int main() {
         }
 
         window.display();
-    } // while 循环结束
-
+    } 
     return 0;
 }
