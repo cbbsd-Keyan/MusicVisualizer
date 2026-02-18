@@ -1,5 +1,7 @@
 ﻿#include <SFML/Graphics.hpp>
 #include <SFML/Audio.hpp>
+#include <windows.h>
+#include <commdlg.h>
 #include <iostream>
 #include <cmath>
 #include <vector>
@@ -468,11 +470,16 @@ class FrequencyBars {
 private:
     std::vector<sf::RectangleShape> bars;
     std::vector<SmoothValue<float>> barHeights;
+    std::vector<float> maxBandEnergy;      // 每个频带的历史最大能量（用于AGC）
     int barCount;
     float barWidth;
     float maxHeight;
+    float baseHeightScale = 0.25f;          // 基础缩放系数（可调，建议0.2~0.3）
+    float attack = 0.1f;                    // 上升速度：遇到新峰值时，新峰值占的比例（越小越慢）
+    float decay = 0.9995f;                   // 衰减速度：没有新峰值时，每帧乘以的系数（越接近1衰减越慢）
+
 public:
-    FrequencyBars(int count, float maxH = 400.0f) : barCount(count), maxHeight(maxH) {
+    FrequencyBars(int count, float maxH = 600.0f) : barCount(count), maxHeight(maxH) {
         float totalSpacing = (count - 1) * 1.0f;
         float availableWidth = WINDOW_WIDTH - totalSpacing;
         barWidth = availableWidth / count;
@@ -486,42 +493,55 @@ public:
             bars.push_back(bar);
             barHeights.push_back(SmoothValue<float>(10.0f, 20.0f));
         }
+        maxBandEnergy.resize(count, 0.01f);   // 初始化一个很小的正值
     }
+
     int frameCount = 0;
+
     void update(const std::vector<float>& bandEnergies, float dt, const ColorPalette& palette,
-        bool useEmotionalColors, float globalScale) {
+        bool useEmotionalColors) {
         static std::vector<float> prevEnergies(barCount, 0.0f);
-        static std::vector<float> maxBandEnergy(barCount, 0.01f);  // 每个频带独立最大值
+
         for (int i = 0; i < barCount; i++) {
             float energy = (i < (int)bandEnergies.size()) ? bandEnergies[i] : 0.0f;
             float smoothedEnergy = prevEnergies[i] * 0.95f + energy * 0.05f;
             prevEnergies[i] = smoothedEnergy;
 
-            // 更新每个频带的最大值
+            // ---------- 频带独立AGC ----------
+            // 更新最大值（慢速上升，避免被瞬态峰值拉高）
             if (smoothedEnergy > maxBandEnergy[i]) {
-                maxBandEnergy[i] = maxBandEnergy[i] * 0.7f + smoothedEnergy * 0.3f;
+                maxBandEnergy[i] = maxBandEnergy[i] * (1 - attack) + smoothedEnergy * attack;
             }
             else {
-                maxBandEnergy[i] *= 0.9995f;
+                // 缓慢衰减
+                maxBandEnergy[i] *= decay;
             }
-            if (maxBandEnergy[i] < 0.01f) maxBandEnergy[i] = 0.01f;
+            // 避免衰减到0
+            if (maxBandEnergy[i] < 0.001f) maxBandEnergy[i] = 0.001f;
 
+            // 计算归一化能量（0~1）
             float normEnergy = smoothedEnergy / maxBandEnergy[i];
-            normEnergy = std::min(normEnergy, 1.0f);
+            //normEnergy = std::min(normEnergy, 1.0f);
 
-            float logEnergy = std::log10(1.0f + normEnergy * 99.0f); // 对数压缩
+            // 可选：对高频频带额外增益（让右侧更敏感）
+            float highBoost = 1.0f + 1.5f * (float)i / barCount;  // 高频增益最多2.5倍
+            float boostedNorm = normEnergy * highBoost;
 
-            // 不使用 globalScale，或者用 globalScale 微调（可保留但系数调小）
-            float targetHeight = logEnergy * maxHeight * 0.2f;  // 去掉 globalScale
-            targetHeight = std::min(targetHeight, maxHeight);
+            // 对数压缩（可选，使变化更平滑）
+            float logEnergy = std::log10(1.0f + boostedNorm * 99.0f);  // 0~2
+
+            // 目标高度：留出20%余量，永不触顶
+            float targetHeight = logEnergy * maxHeight * baseHeightScale * 0.8f;
+            //targetHeight = std::min(targetHeight, maxHeight * 10.0f); // 硬上限为 maxHeight 的80%
             targetHeight = std::max(targetHeight, 7.0f);
+
             barHeights[i].setTarget(targetHeight);
             barHeights[i].update(dt);
             float currentHeight = barHeights[i].getCurrent();
             bars[i].setSize(sf::Vector2f(barWidth, currentHeight));
             bars[i].setPosition(bars[i].getPosition().x, WINDOW_HEIGHT - currentHeight);
 
-            // 颜色
+            // 颜色（保持不变）
             if (useEmotionalColors) {
                 float ratio = (float)i / barCount;
                 sf::Color color;
@@ -537,14 +557,14 @@ public:
         }
         frameCount++;
     }
-    void draw(sf::RenderTarget& target) { for (auto& bar : bars) target.draw(bar); }
-};
 
+    void draw(sf::RenderTarget& target) {
+        for (auto& bar : bars) target.draw(bar);
+    }
+};
 namespace SpectrumEffect {
-    static float maxOverallEnergy = 0.01f;
-    static float globalNorm = 0.0f;
     const int VISUAL_BANDS = 256;
-    FrequencyBars frequencyBars(VISUAL_BANDS, 1000.0f);
+    FrequencyBars frequencyBars(VISUAL_BANDS, 600.0f);
     sf::RenderTexture trailTexture;
     SmoothValue<float> smoothedVolume(0.0f, 5.0f);
     std::vector<float> bandEnergies;
@@ -561,23 +581,13 @@ namespace SpectrumEffect {
         const ColorPalette& palette, bool useEmotionalColors) {
         bandEnergies = energies;
 
-        // ----- 计算总体能量并更新全局AGC -----
-        float totalEnergy = 0.0f;
-        for (float e : bandEnergies) totalEnergy += e;
-        if (totalEnergy > maxOverallEnergy)
-            maxOverallEnergy = maxOverallEnergy * 0.7f + totalEnergy * 0.3f;
-        else
-            maxOverallEnergy *= 0.999f;          // 缓慢衰减
-        if (maxOverallEnergy < 0.01f) maxOverallEnergy = 0.01f;
-        float rawGlobal = totalEnergy / maxOverallEnergy;
-        rawGlobal = std::min(rawGlobal, 1.0f);
-        globalNorm = globalNorm * 0.95f + rawGlobal * 0.05f;
-
-        // 拖尾绘制
+        // 拖尾绘制（保持不变）
         sf::RectangleShape trailRect(sf::Vector2f(WINDOW_WIDTH, WINDOW_HEIGHT));
         trailRect.setFillColor(sf::Color(0, 0, 0, 30));
         trailTexture.draw(trailRect, sf::BlendAlpha);
-        frequencyBars.update(bandEnergies, dt, palette, useEmotionalColors, globalNorm);  // 新增参数
+
+        // 调用 frequencyBars.update，注意现在只有4个参数
+        frequencyBars.update(bandEnergies, dt, palette, useEmotionalColors);
         frequencyBars.draw(trailTexture);
         trailTexture.display();
     }
@@ -586,7 +596,24 @@ namespace SpectrumEffect {
         window.draw(trailSprite);
     }
 }
+std::string openFileDialog() {
+    OPENFILENAMEA ofn;          // 结构体，用于配置对话框
+    CHAR szFile[260] = { 0 };    // 存储选中的文件路径
 
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = NULL;        // 对话框的父窗口句柄
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = "Audio Files\0*.mp3;*.wav;*.ogg\0All Files\0*.*\0";  // 文件类型过滤
+    ofn.nFilterIndex = 1;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;  // 选项标志
+
+    if (GetOpenFileNameA(&ofn)) {
+        return std::string(szFile);  // 用户选择了文件，返回路径
+    }
+    return "";  // 用户取消，返回空字符串
+}
 // ==================== 主程序 ====================
 int main() {
     // ----- 窗口创建 -----
@@ -599,7 +626,23 @@ int main() {
 
     // ----- 音频加载 -----
     sf::SoundBuffer soundBuffer;
-    std::string musicPath = "C:\\Users\\zhaok\\Desktop\\dvorak_new_world.mp3";
+    //std::string musicPath = "C:\\Users\\zhaok\\Desktop\\dvorak_new_world.mp3";
+    //std::string musicPath = "C:\\Users\\zhaok\\Desktop\\turkey.mp3";
+    //std::string musicPath = "C:\\Users\\zhaok\\Desktop\\颁奖曲   拉德斯基进行曲-背景音乐_爱给网_aigei_com.mp3";
+    std::string musicPath;
+
+    // 循环直到用户选择了一个有效的文件
+    while (musicPath.empty()) {
+        musicPath = openFileDialog();
+        if (musicPath.empty()) {
+            // 用户点了取消，询问是否退出
+            std::cout << "未选择文件。按 Q 退出，或按任意键重新选择..." << std::endl;
+            char ch = getchar();
+            if (ch == 'q' || ch == 'Q') {
+                return 0;  // 退出程序
+            }
+        }
+    }
     if (!soundBuffer.loadFromFile(musicPath)) {
         std::cerr << "Error: Cannot load audio file! Use simulated audio." << std::endl;
     }
@@ -645,6 +688,16 @@ int main() {
     std::cout << "  +/-       : Waveform amplitude (Waveform mode)\n";
     std::cout << "  C         : Clear particles (Particle mode)\n";
     std::cout << "  ESC       : Exit\n";
+
+    sf::Font font;
+    if (font.loadFromFile("C:/Windows/Fonts/arial.ttf")) {
+        sf::Text promptText;
+        promptText.setFont(font);
+        promptText.setCharacterSize(24);
+        promptText.setFillColor(sf::Color::White);
+        promptText.setPosition(20, WINDOW_HEIGHT - 60);
+        promptText.setString("Click 'Open' button or drag file here");
+    }
 
     while (window.isOpen()) {
         float dt = frameClock.restart().asSeconds();
