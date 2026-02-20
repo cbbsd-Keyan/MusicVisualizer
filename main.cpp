@@ -29,7 +29,6 @@ float calculateVolume(const sf::Int16* samples, size_t count) {
     return std::sqrt(sumSquares / count);
 }
 
-// ---------- 以下是从 circle.cpp 原封不动搬来的 HSB 和 FFT ----------
 sf::Color hsbToRgb(float hue, float saturation, float brightness) {
     hue = fmod(hue, 360.0f);
     if (hue < 0) hue += 360.0f;
@@ -60,7 +59,6 @@ sf::Color hsbToRgb(float hue, float saturation, float brightness) {
     else {
         r = c; g = 0; b = x;
     }
-
     return sf::Color(
         static_cast<sf::Uint8>((r + m) * 255),
         static_cast<sf::Uint8>((g + m) * 255),
@@ -103,34 +101,25 @@ std::vector<float> mapSpectrumToBands(const std::vector<float>& spectrum, int ba
     std::vector<float> bandEnergies(bands, 0.0f);
     int specSize = (int)spectrum.size();
     if (specSize == 0 || bands == 0) return bandEnergies;
-
-    // ---------- 使用传入的真实采样率 ----------
     float nyquist = sampleRate / 2.0f;
     float minFreq = 20.0f;
-    float maxFreq = nyquist;          // 直接使用 nyquist，不硬编码 20000
-
+    float maxFreq = nyquist;
     float logMin = std::log10(minFreq);
     float logMax = std::log10(maxFreq);
-
-    // ---------- 频带分配（保证不重叠，至少1个bin）----------
     std::vector<int> binStart(bands), binEnd(bands);
     int lastEnd = 0;
 
     for (int b = 0; b < bands; b++) {
-        // 对数均匀的频率范围
         float logStart = logMin + (logMax - logMin) * b / bands;
         float logEnd = logMin + (logMax - logMin) * (b + 1) / bands;
         float freqStart = std::pow(10.0f, logStart);
         float freqEnd = std::pow(10.0f, logEnd);
-
-        // 转换为 bin 索引（浮点）
         float binStartF = freqStart / nyquist * specSize;
         float binEndF = freqEnd / nyquist * specSize;
 
-        // 整数分配，保证不重叠且至少1个bin
         binStart[b] = std::max((int)std::round(binStartF), lastEnd);
         if (b == bands - 1) {
-            binEnd[b] = specSize;   // 最后一个频带到结尾
+            binEnd[b] = specSize; 
         }
         else {
             binEnd[b] = std::max(binStart[b] + 1, std::min((int)std::round(binEndF), specSize));
@@ -141,7 +130,6 @@ std::vector<float> mapSpectrumToBands(const std::vector<float>& spectrum, int ba
         lastEnd = binEnd[b];
     }
 
-    // ---------- 计算每个频带的平均能量 ----------
     std::vector<float> rawEnergies(bands, 0.0f);
     for (int b = 0; b < bands; b++) {
         float sum = 0.0f;
@@ -150,27 +138,25 @@ std::vector<float> mapSpectrumToBands(const std::vector<float>& spectrum, int ba
             sum += spectrum[i];
         }
         float avg = sum / count;
-        rawEnergies[b] = std::log10(1.0f + avg * 99.0f);  // 对数压缩
+        rawEnergies[b] = std::log10(1.0f + avg * 99.0f);
     }
 
     // ---------- 自动增益控制（AGC）----------
     static std::vector<float> longTermAvg(bands, 0.0f);
     static std::vector<float> gain(bands, 1.0f);
     float alpha = 0.02f;
-    float targetLevel = 0.4f;        // 可调，整体高度
+    float targetLevel = 0.4f; 
 
     for (int b = 0; b < bands; b++) {
         longTermAvg[b] = longTermAvg[b] * (1 - alpha) + rawEnergies[b] * alpha;
         if (longTermAvg[b] > 0.01f) {
             gain[b] = targetLevel / longTermAvg[b];
         }
-        // 🔥 关键修复：大幅提高增益上限，让高频能跳起来
-        gain[b] = std::clamp(gain[b], 0.2f, 8.0f);   // 上限从4.0 → 8.0
+        gain[b] = std::clamp(gain[b], 0.2f, 8.0f); 
 
-        // 🔥 高频额外增益：最后1/10频带再提升
         float extraGain = 1.0f;
-        if (b > bands * 0.9f) extraGain = 4.0f;      // 最后10%频带增益4倍
-        else if (b > bands * 0.7f) extraGain = 2.5f; // 70%~90%频带增益2.5倍
+        if (b > bands * 0.9f) extraGain = 4.0f;
+        else if (b > bands * 0.7f) extraGain = 2.5f;
 
         bandEnergies[b] = rawEnergies[b] * gain[b] * extraGain;
     }
@@ -178,7 +164,7 @@ std::vector<float> mapSpectrumToBands(const std::vector<float>& spectrum, int ba
     return bandEnergies;
 }
 
-// ==================== 效果 1：粒子系统（来自 particles.cpp，原封不动）====================
+// ==================== 效果 1：粒子系统 ====================
 class MusicParticle {
 public:
     sf::Vector2f position;
@@ -215,7 +201,6 @@ namespace ParticleEffect {
         smoothedVolume.update(dt);
         float smoothVol = smoothedVolume.getCurrent();
 
-        // ----- 自动增益控制（AGC）-----
         if (smoothVol > maxVolumeSeen)
             maxVolumeSeen = maxVolumeSeen * 0.7f + smoothVol * 0.3f;
         else
@@ -227,7 +212,6 @@ namespace ParticleEffect {
 
         if (isPlaying) {
             if (particleClock.getElapsedTime().asSeconds() > 0.05f) {
-                // 用 normVolume 替换原来的 smoothVol（系数不变）
                 int particleCount = 2 + static_cast<int>(normVolume * 5.0f);          // 原来用 smoothVol*5
                 for (int i = 0; i < particleCount; i++) {
                     float angle = static_cast<float>(rand() % 360) * 3.14159f / 180.0f;
@@ -236,7 +220,6 @@ namespace ParticleEffect {
                         WINDOW_WIDTH / 2.0f + cos(angle) * circleRadius,
                         WINDOW_HEIGHT / 2.0f + sin(angle) * circleRadius
                     );
-                    // 颜色选择
                     if (useEmotionalColors) {
                         particle.color = palette.primary;
                     }
@@ -268,7 +251,7 @@ namespace ParticleEffect {
     void clear() { particles.clear(); }
 }
 
-// ==================== 效果 2：波形图（来自 waveform_visualizer_english.cpp，原封不动）====================
+// ==================== 效果 2：波形图 ====================
 class WaveformVisualizer {
 private:
     sf::VertexArray waveform;
@@ -418,29 +401,20 @@ namespace CircleEffect {
         trailTexture.clear(sf::Color::Black);
     }
     void update(float dt, float volume, const ColorPalette& palette, bool useEmotionalColors) {
-        // 1. 更新平滑音量（保留原有平滑，数值可调）
         smoothedVolume.setTarget(volume);
         smoothedVolume.update(dt);
         float smoothVol = smoothedVolume.getCurrent();
-
-        // 2. 直接使用平滑音量映射到圆环大小（线性映射）
-        const float VOLUME_TO_RADIUS_FACTOR = 1000.0f;  // 原系数，可调
-        const float MAX_RADIUS = 400.0f;                // 原最大半径，可调
-        const float MIN_RADIUS = 20.0f;                 // 新增最小半径，避免完全消失（可调）
-
+        const float VOLUME_TO_RADIUS_FACTOR = 1000.0f;
+        const float MAX_RADIUS = 400.0f; 
+        const float MIN_RADIUS = 20.0f; 
         float targetCircleSize = smoothVol * VOLUME_TO_RADIUS_FACTOR;
-        // 限制在最小和最大之间
         targetCircleSize = std::clamp(targetCircleSize, MIN_RADIUS, MAX_RADIUS);
-
-        // 3. 平滑半径变化（circleSize 本身已提供平滑，其速度可调）
         circleSize.setTarget(targetCircleSize);
         circleSize.update(dt);
         float currentCircleSize = circleSize.getCurrent();
-
         centerCircle.setRadius(currentCircleSize);
         centerCircle.setOrigin(currentCircleSize, currentCircleSize);
 
-        // 4. 颜色设置（保持不变）
         if (useEmotionalColors) {
             centerCircle.setOutlineColor(palette.primary);
             centerCircle.setFillColor(sf::Color::Transparent);
@@ -450,7 +424,6 @@ namespace CircleEffect {
             centerCircle.setFillColor(sf::Color::Transparent);
         }
 
-        // 5. 拖尾绘制（保持不变）
         sf::RectangleShape trailRect(sf::Vector2f(WINDOW_WIDTH, WINDOW_HEIGHT));
         trailRect.setFillColor(sf::Color(0, 0, 0, 30));
         trailTexture.draw(trailRect, sf::BlendAlpha);
@@ -470,13 +443,13 @@ class FrequencyBars {
 private:
     std::vector<sf::RectangleShape> bars;
     std::vector<SmoothValue<float>> barHeights;
-    std::vector<float> maxBandEnergy;      // 每个频带的历史最大能量（用于AGC）
+    std::vector<float> maxBandEnergy;
     int barCount;
     float barWidth;
     float maxHeight;
-    float baseHeightScale = 0.25f;          // 基础缩放系数（可调，建议0.2~0.3）
-    float attack = 0.1f;                    // 上升速度：遇到新峰值时，新峰值占的比例（越小越慢）
-    float decay = 0.9995f;                   // 衰减速度：没有新峰值时，每帧乘以的系数（越接近1衰减越慢）
+    float baseHeightScale = 0.25f; 
+    float attack = 0.1f; 
+    float decay = 0.9995f; 
 
 public:
     FrequencyBars(int count, float maxH = 600.0f) : barCount(count), maxHeight(maxH) {
@@ -493,7 +466,7 @@ public:
             bars.push_back(bar);
             barHeights.push_back(SmoothValue<float>(10.0f, 20.0f));
         }
-        maxBandEnergy.resize(count, 0.01f);   // 初始化一个很小的正值
+        maxBandEnergy.resize(count, 0.01f); 
     }
 
     int frameCount = 0;
@@ -507,41 +480,26 @@ public:
             float smoothedEnergy = prevEnergies[i] * 0.95f + energy * 0.05f;
             prevEnergies[i] = smoothedEnergy;
 
-            // ---------- 频带独立AGC ----------
-            // 更新最大值（慢速上升，避免被瞬态峰值拉高）
             if (smoothedEnergy > maxBandEnergy[i]) {
                 maxBandEnergy[i] = maxBandEnergy[i] * (1 - attack) + smoothedEnergy * attack;
             }
             else {
-                // 缓慢衰减
                 maxBandEnergy[i] *= decay;
             }
-            // 避免衰减到0
             if (maxBandEnergy[i] < 0.001f) maxBandEnergy[i] = 0.001f;
 
-            // 计算归一化能量（0~1）
             float normEnergy = smoothedEnergy / maxBandEnergy[i];
-            //normEnergy = std::min(normEnergy, 1.0f);
-
-            // 可选：对高频频带额外增益（让右侧更敏感）
-            float highBoost = 1.0f + 1.5f * (float)i / barCount;  // 高频增益最多2.5倍
+            float highBoost = 1.0f + 1.5f * (float)i / barCount; 
             float boostedNorm = normEnergy * highBoost;
-
-            // 对数压缩（可选，使变化更平滑）
-            float logEnergy = std::log10(1.0f + boostedNorm * 99.0f);  // 0~2
-
-            // 目标高度：留出20%余量，永不触顶
+            float logEnergy = std::log10(1.0f + boostedNorm * 99.0f); 
             float targetHeight = logEnergy * maxHeight * baseHeightScale * 0.8f;
-            //targetHeight = std::min(targetHeight, maxHeight * 10.0f); // 硬上限为 maxHeight 的80%
             targetHeight = std::max(targetHeight, 7.0f);
-
             barHeights[i].setTarget(targetHeight);
             barHeights[i].update(dt);
             float currentHeight = barHeights[i].getCurrent();
             bars[i].setSize(sf::Vector2f(barWidth, currentHeight));
             bars[i].setPosition(bars[i].getPosition().x, WINDOW_HEIGHT - currentHeight);
 
-            // 颜色（保持不变）
             if (useEmotionalColors) {
                 float ratio = (float)i / barCount;
                 sf::Color color;
@@ -557,7 +515,6 @@ public:
         }
         frameCount++;
     }
-
     void draw(sf::RenderTarget& target) {
         for (auto& bar : bars) target.draw(bar);
     }
@@ -581,12 +538,10 @@ namespace SpectrumEffect {
         const ColorPalette& palette, bool useEmotionalColors) {
         bandEnergies = energies;
 
-        // 拖尾绘制（保持不变）
         sf::RectangleShape trailRect(sf::Vector2f(WINDOW_WIDTH, WINDOW_HEIGHT));
         trailRect.setFillColor(sf::Color(0, 0, 0, 30));
         trailTexture.draw(trailRect, sf::BlendAlpha);
 
-        // 调用 frequencyBars.update，注意现在只有4个参数
         frequencyBars.update(bandEnergies, dt, palette, useEmotionalColors);
         frequencyBars.draw(trailTexture);
         trailTexture.display();
@@ -597,49 +552,39 @@ namespace SpectrumEffect {
     }
 }
 std::string openFileDialog() {
-    OPENFILENAMEA ofn;          // 结构体，用于配置对话框
-    CHAR szFile[260] = { 0 };    // 存储选中的文件路径
+    OPENFILENAMEA ofn;         
+    CHAR szFile[260] = { 0 }; 
 
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;        // 对话框的父窗口句柄
+    ofn.hwndOwner = NULL;
     ofn.lpstrFile = szFile;
     ofn.nMaxFile = sizeof(szFile);
-    ofn.lpstrFilter = "Audio Files\0*.mp3;*.wav;*.ogg\0All Files\0*.*\0";  // 文件类型过滤
+    ofn.lpstrFilter = "Audio Files\0*.mp3;*.wav;*.ogg\0All Files\0*.*\0";
     ofn.nFilterIndex = 1;
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;  // 选项标志
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
 
     if (GetOpenFileNameA(&ofn)) {
-        return std::string(szFile);  // 用户选择了文件，返回路径
+        return std::string(szFile);
     }
-    return "";  // 用户取消，返回空字符串
+    return ""; 
 }
 // ==================== 主程序 ====================
 int main() {
-    // ----- 窗口创建 -----
     sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Music Visualizer - 4 in 1");
     window.setFramerateLimit(60);
-
-    // 颜色模式
     enum ColorMode { COLORFUL, EMOTIONAL };
     ColorMode currentColorMode = COLORFUL;
-
-    // ----- 音频加载 -----
     sf::SoundBuffer soundBuffer;
-    //std::string musicPath = "C:\\Users\\zhaok\\Desktop\\dvorak_new_world.mp3";
-    //std::string musicPath = "C:\\Users\\zhaok\\Desktop\\turkey.mp3";
-    //std::string musicPath = "C:\\Users\\zhaok\\Desktop\\颁奖曲   拉德斯基进行曲-背景音乐_爱给网_aigei_com.mp3";
     std::string musicPath;
 
-    // 循环直到用户选择了一个有效的文件
     while (musicPath.empty()) {
         musicPath = openFileDialog();
         if (musicPath.empty()) {
-            // 用户点了取消，询问是否退出
             std::cout << "未选择文件。按 Q 退出，或按任意键重新选择..." << std::endl;
             char ch = getchar();
             if (ch == 'q' || ch == 'Q') {
-                return 0;  // 退出程序
+                return 0; 
             }
         }
     }
@@ -660,20 +605,15 @@ int main() {
         channels = soundBuffer.getChannelCount();
     }
 
-    // ----- 初始化四个效果 -----
     ParticleEffect::init();
     WaveformEffect::init();
     CircleEffect::init();
     SpectrumEffect::init();
-
-    // ----- 状态控制 -----
     enum EffectMode { PARTICLE, WAVEFORM, CIRCLE, SPECTRUM };
     EffectMode currentMode = PARTICLE;
     bool isPlaying = false;
     sf::Clock frameClock, audioClock;
     std::vector<float> currentSamples;
-
-    // 频谱计算相关
     const int FFT_SIZE = 1024;
     std::vector<float> audioBuffer(FFT_SIZE, 0.0f);
     std::vector<float> spectrum;
@@ -702,14 +642,12 @@ int main() {
     while (window.isOpen()) {
         float dt = frameClock.restart().asSeconds();
 
-        // ----- 事件处理 -----
         sf::Event event;
         while (window.pollEvent(event)) {
             if (event.type == sf::Event::Closed)
                 window.close();
 
             if (event.type == sf::Event::KeyPressed) {
-                // 效果切换 (数字键 1-4)
                 if (event.key.code == sf::Keyboard::Num1) currentMode = PARTICLE;
                 if (event.key.code == sf::Keyboard::Num2) currentMode = WAVEFORM;
                 if (event.key.code == sf::Keyboard::Num3) currentMode = CIRCLE;
@@ -717,14 +655,10 @@ int main() {
                 if (event.key.code == sf::Keyboard::Tab) {
                     currentMode = static_cast<EffectMode>((currentMode + 1) % 4);
                 }
-
-                // 颜色模式切换 (M键)
                 if (event.key.code == sf::Keyboard::M) {
                     currentColorMode = (currentColorMode == COLORFUL) ? EMOTIONAL : COLORFUL;
                     std::cout << "Color mode: " << (currentColorMode == COLORFUL ? "Colorful" : "Emotional") << std::endl;
                 }
-
-                // 播放控制
                 if (event.key.code == sf::Keyboard::Space) {
                     if (hasAudio) {
                         if (sound.getStatus() == sf::Sound::Playing) {
@@ -740,8 +674,6 @@ int main() {
                         isPlaying = !isPlaying;
                     }
                 }
-
-                // 重新开始
                 if (event.key.code == sf::Keyboard::R) {
                     if (hasAudio) {
                         sound.stop();
@@ -753,23 +685,18 @@ int main() {
                         audioClock.restart();
                     }
                 }
-
-                // 波形振幅调整
                 if (event.key.code == sf::Keyboard::Add || event.key.code == sf::Keyboard::Equal) {
                     WaveformEffect::setScale(WaveformEffect::currentScale + 20.0f);
                 }
                 if (event.key.code == sf::Keyboard::Subtract || event.key.code == sf::Keyboard::Dash) {
                     WaveformEffect::setScale(std::max(20.0f, WaveformEffect::currentScale - 20.0f));
                 }
-
-                // 清除粒子（仅在粒子模式下有效）
                 if (event.key.code == sf::Keyboard::C && currentMode == PARTICLE) {
                     ParticleEffect::clear();
                 }
             }
-        } // 事件循环结束
+        }
 
-        // ----- 获取当前音频数据 -----
         float currentTime = 0.0f;
         float currentVolume = 0.0f;
         currentSamples.clear();
@@ -796,12 +723,10 @@ int main() {
                         }
                     }
                 }
-                // 为频谱效果计算 FFT 和频带能量
                 const int FFT_SIZE = 1024;
                 std::vector<float> fftInput(FFT_SIZE, 0.0f);
                 size_t copySize = std::min((size_t)FFT_SIZE, currentSamples.size());
                 std::copy(currentSamples.begin(), currentSamples.begin() + copySize, fftInput.begin());
-                // 加窗
                 for (size_t i = 0; i < FFT_SIZE; i++) {
                     float window = 0.5f * (1.0f - cos(2.0f * 3.14159f * i / (FFT_SIZE - 1)));
                     fftInput[i] *= window;
@@ -811,7 +736,6 @@ int main() {
             }
         }
         else if (isPlaying) {
-            // 模拟音频（无音频文件时）
             currentTime = audioClock.getElapsedTime().asSeconds();
             currentSamples.resize(4096);
             for (size_t i = 0; i < currentSamples.size(); i++) {
@@ -833,11 +757,8 @@ int main() {
         features.spectrum = spectrum;
         if (features.spectrum.empty() && !spectrum.empty())
             features.spectrum = spectrum;
-
-        // ----- 情感检测与更新 -----
         emotionDetector.update(dt, features, static_cast<float>(sampleRate));
         colorMapper.update(dt);
-        // 获取当前情感调色板和动画参数
         ColorPalette palette = colorMapper.getCurrentPalette();
         AnimationParameters animParams = animationMapper.getCurrentParameters();
         std::string emotionName = colorMapper.getEmotionName();
@@ -853,7 +774,6 @@ int main() {
             << " Low/High: " << smoothLowHighRatio
             << " Emotion: " << emotionName << std::endl;*/
 
-        // ----- 更新当前效果 -----
         bool useEmo = (currentColorMode == EMOTIONAL);
         switch (currentMode) {
         case PARTICLE:
@@ -877,7 +797,6 @@ int main() {
             break;
         }
 
-        // ----- 绘制 -----
         window.clear(sf::Color(10, 10, 30));
         switch (currentMode) {
         case PARTICLE:  ParticleEffect::draw(window); break;
@@ -885,8 +804,6 @@ int main() {
         case CIRCLE:    CircleEffect::draw(window); break;
         case SPECTRUM:  SpectrumEffect::draw(window); break;
         }
-
-        // ----- UI 文字 -----
         sf::Font font;
         if (font.loadFromFile("C:/Windows/Fonts/arial.ttf")) {
             sf::Text modeText;
@@ -904,7 +821,6 @@ int main() {
             modeText.setString("Mode: " + modeName + "  (M to toggle color mode)");
             window.draw(modeText);
 
-            // 可选：显示当前情绪
             sf::Text emotionText;
             emotionText.setFont(font);
             emotionText.setCharacterSize(24);
@@ -913,7 +829,6 @@ int main() {
             emotionText.setString("Emotion: " + emotionName);
             window.draw(emotionText);
         }
-
         window.display();
     } 
     return 0;
