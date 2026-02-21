@@ -96,105 +96,30 @@ public:
     float getSmoothCentroid() const { return smoothCentroid; }
     float getSmoothFlux() const { return smoothFlux; }
     float getSmoothLowHighRatio() const { return smoothLowHighRatio; }
-    /*void update(float dt, const AudioFeatures& features, float sampleRate) {
-        float volume = features.volume;
-        float centroid = computeSpectralCentroid(features.spectrum, sampleRate);
-        float flux = computeSpectralFlux(features.spectrum, lastSpectrum);
-        float lowHighRatio = computeLowHighRatio(features.bandEnergies);
-        float lowVar = computeLowFreqVariance(features.bandEnergies);
-
-        smoothVolume = smoothVolume * (1 - alpha) + volume * alpha;
-        smoothCentroid = smoothCentroid * (1 - alpha) + centroid * alpha;
-        smoothFlux = smoothFlux * (1 - alpha) + flux * alpha;
-        smoothLowHighRatio = smoothLowHighRatio * (1 - alpha) + lowHighRatio * alpha;
-        smoothLowVar = smoothLowVar * (1 - alpha) + lowVar * alpha;
-
-        float scoreCalm = 0.0f, scoreExcited = 0.0f, scoreSad = 0.0f, scoreJoyful = 0.0f;
-
-        if (smoothVolume < 0.15f) {
-            scoreCalm += 2.0f;
-        }
-        else if (smoothVolume > 0.3f) {
-            if (smoothCentroid > 1000.0f) {
-                scoreExcited += 3.0f;
-            }
-            else {
-                scoreExcited += 1.0f;
-            }
-        }
-        else {
-            scoreJoyful += 2.0f;
-        }
-
-        if (smoothCentroid < 400.0f) {
-            scoreSad += 2.0f;
-        }
-        else if (smoothCentroid > 1400.0f) {
-            if (smoothFlux > 0.1f) {
-                scoreExcited += 3.0f;
-            }
-        }
-        else {
-            scoreJoyful += 2.0f;
-        }
-
-        if (smoothFlux < 0.05f) {
-            scoreCalm += 2.0f;
-        }
-        else if (smoothFlux > 0.15f) {
-            scoreExcited += 3.0f;
-        }
-        else {
-            scoreJoyful += 2.0f;
-        }
-
-        if (smoothLowHighRatio > 1.5f) {
-            scoreSad += 2.0f;
-        }
-        else if (smoothLowHighRatio < 0.8f) {
-            scoreExcited += 1.5f;
-        }
-
-        if (smoothLowVar < 0.01f) {
-            scoreSad += 1.0f;
-        }
-        else if (smoothLowVar > 0.05f) {
-            scoreExcited += 1.5f;
-        }
-
-        if (smoothCentroid > 1200.0f && smoothFlux > 0.12f) {
-            scoreExcited += 2.0f;
-        }
-        if (smoothCentroid < 400.0f && smoothFlux < 0.08f) {
-            scoreSad += 2.0f;
-        }
-
-        if (smoothCentroid > 400.0f && smoothCentroid < 1000.0f &&
-            smoothFlux > 0.05f && smoothFlux < 0.15f &&
-            smoothLowHighRatio > 1.0f) {
-            scoreSad += 3.0f;
-        }
-        if (smoothLowVar > 0.01f && smoothLowVar < 0.04f) {
-            scoreSad += 1.0f;
-        }
-        if (smoothCentroid > 1000.0f && smoothCentroid < 1400.0f &&
-            smoothFlux < 0.05f && smoothLowHighRatio > 1.5f) {
-            scoreSad += 3.0f; 
-        }
-
-        std::vector<float> scores = { scoreCalm, scoreExcited, scoreSad, scoreJoyful };
-        printf("Vol=%.2f, Cent=%.1f, Flux=%.3f, LHRatio=%.2f, LowVar=%.4f\n",
-            smoothVolume, smoothCentroid, smoothFlux, smoothLowHighRatio, smoothLowVar);
-        printf("Calm=%.1f, Excited=%.1f, Sad=%.1f, Joyful=%.1f -> %s\n",
-            scoreCalm, scoreExcited, scoreSad, scoreJoyful, getEmotionName().c_str());
-        int idx = std::max_element(scores.begin(), scores.end()) - scores.begin();
-        currentEmotion = static_cast<Emotion>(idx);
-
-        lastSpectrum = features.spectrum;
-        lastVolume = volume;
-    }
-    */
     void update(float dt, const AudioFeatures& features, float sampleRate) {
+        const float alpha = this->alpha; 
+
+        constexpr float VOLUME_CALM_THRESH = 0.15f;
+        constexpr float VOLUME_EXCITED_THRESH = 0.3f;
+        constexpr float CENTROID_SAD_THRESH = 400.0f;
+        constexpr float CENTROID_EXCITED_THRESH = 1400.0f;
+        constexpr float CENTROID_VERY_HIGH = 1600.0f;
+        constexpr float CENTROID_VOLUME_HIGH = 1000.0f; 
+        constexpr float FLUX_LOW_THRESH = 0.05f;
+        constexpr float FLUX_MED_THRESH = 0.008f;
+        constexpr float FLUX_HIGH_THRESH = 0.015f;
+        constexpr float FLUX_VERY_HIGH = 0.12f;
+        constexpr float FLUX_SAD_COMBO = 0.08f;
+        constexpr float LOWHIGH_SAD_THRESH = 1000.0f; 
+        constexpr float LOWHIGH_EXCITED_THRESH = 0.8f;
+        constexpr float LOWVAR_SAD_LOW = 0.03f;
+        constexpr float LOWVAR_EXCITED_HIGH = 0.05f;
+        constexpr float VOLUME_SAD_BOOST = 0.05f;
+        constexpr float CENTROID_SAD_MIN = 400.0f;
+        constexpr float CENTROID_SAD_MAX = 1400.0f;
+        constexpr float LOWHIGH_SAD_COMBO = 1.5f;
+        constexpr float CENTROID_EXCITED_COMBO = 1200.0f; 
+
         float volume = features.volume;
         float centroid = computeSpectralCentroid(features.spectrum, sampleRate);
         float flux = computeSpectralFlux(features.spectrum, lastSpectrum);
@@ -203,18 +128,17 @@ public:
 
         smoothVolume = smoothVolume * (1 - alpha) + volume * alpha;
         smoothCentroid = smoothCentroid * (1 - alpha) + centroid * alpha;
-        smoothFlux = smoothFlux * (1 - alpha) + flux * alpha * 10;
+        smoothFlux = smoothFlux * (1 - alpha) + flux * alpha * 10; 
         smoothLowHighRatio = smoothLowHighRatio * (1 - alpha) + lowHighRatio * alpha;
         smoothLowVar = smoothLowVar * (1 - alpha) + lowVar * alpha;
 
         float scoreCalm = 0.0f, scoreExcited = 0.0f, scoreSad = 0.0f, scoreJoyful = 0.0f;
 
-        // ========== 音量权重（Calm 从 2 分降为 1.5） ==========
-        if (smoothVolume < 0.15f) {
+        if (smoothVolume < VOLUME_CALM_THRESH) {
             scoreCalm += 2.0f;
         }
-        else if (smoothVolume > 0.3f) {
-            if (smoothCentroid > 1000.0f) {
+        else if (smoothVolume > VOLUME_EXCITED_THRESH) {
+            if (smoothCentroid > CENTROID_VOLUME_HIGH) {
                 scoreExcited += 3.0f;
             }
             else {
@@ -225,15 +149,14 @@ public:
             scoreJoyful += 2.0f;
         }
 
-        // 质心判断
-        if (smoothCentroid < 400.0f) {
+        if (smoothCentroid < CENTROID_SAD_THRESH) {
             scoreSad += 1.0f;
         }
-        else if (smoothCentroid > 1400.0f) {
-            if (smoothFlux > 0.008f) {
+        else if (smoothCentroid > CENTROID_EXCITED_THRESH) {
+            if (smoothFlux > FLUX_MED_THRESH) {
                 scoreExcited += 2.0f;
             }
-            else if (smoothCentroid > 1600.0f) {
+            else if (smoothCentroid > CENTROID_VERY_HIGH) {
                 scoreExcited += 1.0f;
             }
         }
@@ -241,66 +164,64 @@ public:
             scoreJoyful += 2.0f;
         }
 
-        // ========== 谱通量（Calm 从 2 分降为 1.5） ==========
-        if (smoothFlux < 0.05f) {
-            if (scoreJoyful > 2.0f) scoreCalm += 2.0f;
-            else { scoreCalm += 1.0f; }
+        if (smoothFlux < FLUX_LOW_THRESH) {
+            if (scoreJoyful > 2.0f) {
+                scoreCalm += 2.0f;
+            }
+            else {
+                scoreCalm += 1.0f;
+            }
         }
-        else if (smoothFlux > 0.015f) {
+        else if (smoothFlux > FLUX_HIGH_THRESH) {
             scoreExcited += 3.0f;
         }
-        else if (smoothFlux > 0.008f) {
+        else if (smoothFlux > FLUX_MED_THRESH) {
             scoreExcited += 1.0f;
         }
         else {
             scoreJoyful += 2.0f;
         }
 
-        // 低频/高频比
-        if (smoothLowHighRatio < 1000.0f) {
+        if (smoothLowHighRatio < LOWHIGH_SAD_THRESH) {
             scoreSad += 2.0f;
         }
-        else if (smoothLowHighRatio < 0.8f) {
+        else if (smoothLowHighRatio < LOWHIGH_EXCITED_THRESH) {
             scoreExcited += 1.5f;
         }
 
-        // 低频稳定性
-        if (smoothLowVar < 0.03f) {
+        if (smoothLowVar < LOWVAR_SAD_LOW) {
             scoreSad += 1.0f;
-            if (smoothVolume > 0.05f) scoreSad += 1.0f;
+            if (smoothVolume > VOLUME_SAD_BOOST) {
+                scoreSad += 1.0f;
+            }
         }
-        else if (smoothLowVar > 0.05f) {
+        else if (smoothLowVar > LOWVAR_EXCITED_HIGH) {
             scoreExcited += 1.5f;
         }
 
-        // 特殊组合
-        if (smoothCentroid > 1200.0f && smoothFlux > 0.12f) {
+        if (smoothCentroid > CENTROID_EXCITED_COMBO && smoothFlux > FLUX_VERY_HIGH) {
             scoreExcited += 2.0f;
         }
-        if (smoothCentroid < 400.0f && smoothFlux < 0.08f) {
+        if (smoothCentroid < CENTROID_SAD_THRESH && smoothFlux < FLUX_SAD_COMBO) {
             scoreSad += 2.0f;
         }
-
-        // ========== 合并后的 Sad 中高音区规则 ==========
-        // 条件：质心 400–1400 Hz，通量 < 0.05，低频比 > 1.5 → 加 3 分
-        if (smoothCentroid > 400.0f && smoothCentroid < 1400.0f &&
-            smoothFlux < 0.05f && smoothLowHighRatio > 1.5f&&scoreExcited<=2.0f) {
-            scoreSad +=  1.0f;
+        bool sadMidHighCondition = (smoothCentroid > CENTROID_SAD_MIN && smoothCentroid < CENTROID_SAD_MAX &&
+            smoothFlux < FLUX_LOW_THRESH && smoothLowHighRatio > LOWHIGH_SAD_COMBO &&
+            scoreExcited <= 2.0f);
+        if (sadMidHighCondition) {
+            scoreSad += 1.0f;
         }
-        if (scoreExcited >= 2.0f) scoreSad -= 1.0f;
+        if (scoreExcited >= 2.0f) {
+            scoreSad -= 1.0f;
+        }
 
         std::vector<float> scores = { scoreCalm, scoreExcited, scoreSad, scoreJoyful };
-        printf("Vol=%.2f, Cent=%.1f, Flux=%.3f, LHRatio=%.2f, LowVar=%.4f\n",
-            smoothVolume, smoothCentroid, smoothFlux, smoothLowHighRatio, smoothLowVar);
-        printf("Calm=%.1f, Excited=%.1f, Sad=%.1f, Joyful=%.1f -> %s\n",
-            scoreCalm, scoreExcited, scoreSad, scoreJoyful, getEmotionName().c_str());
         int idx = std::max_element(scores.begin(), scores.end()) - scores.begin();
         currentEmotion = static_cast<Emotion>(idx);
 
         lastSpectrum = features.spectrum;
         lastVolume = volume;
     }
-    
     Emotion getEmotion() const { return currentEmotion; }
 
     std::string getEmotionName() const {

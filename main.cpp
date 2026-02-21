@@ -405,8 +405,8 @@ namespace CircleEffect {
         smoothedVolume.update(dt);
         float smoothVol = smoothedVolume.getCurrent();
         const float VOLUME_TO_RADIUS_FACTOR = 1000.0f;
-        const float MAX_RADIUS = 400.0f; 
-        const float MIN_RADIUS = 20.0f; 
+        const float MAX_RADIUS = 400.0f;
+        const float MIN_RADIUS = 20.0f;
         float targetCircleSize = smoothVol * VOLUME_TO_RADIUS_FACTOR;
         targetCircleSize = std::clamp(targetCircleSize, MIN_RADIUS, MAX_RADIUS);
         circleSize.setTarget(targetCircleSize);
@@ -437,6 +437,7 @@ namespace CircleEffect {
         window.draw(trailSprite);
     }
 }
+
 
 // ==================== 效果 4：频谱条 ====================
 class FrequencyBars {
@@ -767,12 +768,6 @@ int main() {
         float smoothCentroid = emotionDetector.getSmoothCentroid();
         float smoothFlux = emotionDetector.getSmoothFlux();
         float smoothLowHighRatio = emotionDetector.getSmoothLowHighRatio();
-
-        /*std::cout << "Volume: " << smoothVolume
-            << " Centroid: " << smoothCentroid
-            << " Flux: " << smoothFlux
-            << " Low/High: " << smoothLowHighRatio
-            << " Emotion: " << emotionName << std::endl;*/
 
         bool useEmo = (currentColorMode == EMOTIONAL);
         switch (currentMode) {
